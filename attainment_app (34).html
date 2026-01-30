@@ -1,0 +1,801 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Attainment Results Collection</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+        .sn-header { background: #032D42; color: white; }
+        .sn-accent { color: #63DF4E; }
+        .sn-btn-primary { background: #63DF4E; color: #032D42; font-weight: 600; }
+        .sn-btn-primary:hover { opacity: 0.9; }
+        .sn-tab-active { border-bottom: 3px solid #63DF4E; color: #63DF4E; font-weight: 600; }
+        .sn-table-header { background: #81B5A1; color: white; font-weight: 600; }
+        .sn-zebra { background: #F4F4F4; }
+    </style>
+</head>
+<body class="bg-white">
+    <div id="app"></div>
+
+    <script>
+        class AttainmentApp {
+            constructor() {
+                this.isLoggedIn = false;
+                this.managerEmail = '';
+                this.managerName = '';
+                this.isAdmin = false;
+                this.viewMode = 'input';
+                this.inputMethod = 'form';
+                this.currentQuarter = '';
+                this.selectedQuarter = '';
+                this.filterQuarter = '';
+                this.filterYear = new Date().getFullYear();
+                this.daysUntilDeadline = 0;
+                this.reps = [{ firstName: '', lastName: '', role: '', businessUnit: '', attainment: '', quarter: '', leader: 'N' }];
+                this.reportData = [];
+                this.editMode = false;
+                this.editingId = null;
+                this.adminEmail = 'alicia.malboeuf@servicenow.com';
+                this.roles = ['AE', 'SC', 'SSE', 'SSC', 'EA', 'Expert Services', 'RAM', 'ESA'];
+                this.quarters = ['Q1', 'Q2', 'Q3', 'Q4'];
+                this.businessUnits = ['GPC', 'Expert Services', 'Renewals', 'Enterprise Architects', 'CRM & Industry', 'TX', 'Risk', 'Security', 'Risk & Security', 'Core Services', 'Data & Analytics', 'Platform & AI'];
+                this.managers = [
+                    { name: 'Kris Wohlart', email: 'kris.wohlart@servicenow.com' },
+                    { name: 'Marc Spigel', email: 'Marc.Spigel@servicenow.com' },
+                    { name: 'Jeff Whelan', email: 'jeff.whelan@servicenow.com' },
+                    { name: 'Bruce Freilich', email: 'bruce.freilich@servicenow.com' },
+                    { name: 'Karen Stauffer', email: 'Karen.stauffer@servicenow.com' },
+                    { name: 'Anthony Giacchetto', email: 'anthony.giacchetto@servicenow.com' },
+                    { name: 'Benjamin James', email: 'benjamin.james@servicenow.com' },
+                    { name: 'Andrew Koch', email: 'andrew.koch@servicenow.com' },
+                    { name: 'Cliff Harris', email: 'cliff.harris@servicenow.com' },
+                    { name: 'Joe Montgomery', email: 'joseph.montgomery@servicenow.com' },
+                    { name: 'Jennifer Rosene', email: 'jennifer.rosene@servicenow.com' },
+                    { name: 'Kelsey Collins', email: 'kelsey.collins@servicenow.com' },
+                    { name: 'Hugo Rodriguez', email: 'hugo.rodriguez@servicenow.com' }
+                ];
+                this.init();
+            }
+
+            handleQuarterChange(quarter) {
+                this.selectedQuarter = quarter;
+                this.loadReportData();
+                this.render();
+            }
+
+            loadReportData() {
+                let data = JSON.parse(localStorage.getItem('all_submissions') || '[]');
+                
+                // For Report view: filter by filterQuarter and filterYear
+                // For Input view: filter by selectedQuarter (current year only)
+                const quarterToFilter = this.viewMode === 'report' ? this.filterQuarter : this.selectedQuarter;
+                const yearToFilter = this.viewMode === 'report' ? this.filterYear : new Date().getFullYear();
+                
+                if (quarterToFilter) {
+                    const year = yearToFilter.toString();
+                    data = data.filter(r => {
+                        const submissionYear = new Date(r.timestamp).getFullYear().toString();
+                        return r.quarter === quarterToFilter && submissionYear === year;
+                    });
+                }
+                
+                // Filter by manager (unless admin)
+                if (!this.isAdmin) {
+                    data = data.filter(r => r.managerEmail === this.managerEmail);
+                }
+                
+                this.reportData = data;
+            }
+
+            init() {
+                this.calculateDeadline();
+                this.filterQuarter = this.currentQuarter;
+                this.loadReportData();
+                this.render();
+            }
+
+            calculateDeadline() {
+                const today = new Date();
+                const currentMonth = today.getMonth(); // 0-11
+                const currentYear = today.getFullYear();
+                
+                // Array of deadline dates: [month (0-11), day, quarter]
+                const deadlines = [
+                    { month: 0, day: 10, quarter: 'Q1' },   // Jan 10
+                    { month: 3, day: 10, quarter: 'Q2' },   // Apr 10
+                    { month: 6, day: 10, quarter: 'Q3' },   // Jul 10
+                    { month: 9, day: 10, quarter: 'Q4' }    // Oct 10
+                ];
+
+                let nextDeadline = null;
+                
+                // Find the next upcoming deadline
+                for (let deadline of deadlines) {
+                    const deadlineDate = new Date(currentYear, deadline.month, deadline.day);
+                    
+                    // If deadline hasn't passed yet this year, use it
+                    if (today <= deadlineDate) {
+                        nextDeadline = { date: deadlineDate, quarter: deadline.quarter };
+                        break;
+                    }
+                }
+
+                // If all deadlines have passed this year, next deadline is Jan 10 next year
+                if (!nextDeadline) {
+                    nextDeadline = { 
+                        date: new Date(currentYear + 1, 0, 10),  // Jan 10 next year
+                        quarter: 'Q1' 
+                    };
+                }
+
+                this.currentQuarter = nextDeadline.quarter;
+                this.selectedQuarter = nextDeadline.quarter;
+                
+                const diffTime = nextDeadline.date - today;
+                this.daysUntilDeadline = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+            }
+
+            handleLogin(email) {
+                if (email.trim()) {
+                    this.isLoggedIn = true;
+                    this.managerEmail = email;
+                    this.isAdmin = email === this.adminEmail;
+                    this.selectedQuarter = this.currentQuarter;
+                    const parts = email.split('@')[0].split('.');
+                    this.managerName = parts.map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
+                    
+                    // Load existing submissions for current quarter
+                    this.handleQuarterChange(this.currentQuarter);
+                }
+            }
+
+            handleLogout() {
+                this.isLoggedIn = false;
+                this.managerEmail = '';
+                this.managerName = '';
+                this.isAdmin = false;
+                this.reps = [{ firstName: '', lastName: '', role: '', businessUnit: '', attainment: '' }];
+                this.inputMethod = 'form';
+                this.editMode = false;
+                this.render();
+            }
+
+            handleAddRep() {
+                this.reps.push({ firstName: '', lastName: '', role: '', businessUnit: '', attainment: '', quarter: '', leader: 'N' });
+                this.render();
+            }
+
+            handleRemoveRep(index) {
+                this.reps.splice(index, 1);
+                this.render();
+            }
+
+            handleRepChange(index, field, value) {
+                this.reps[index][field] = value;
+            }
+
+            handleSubmit() {
+                const validReps = this.reps.filter(r => r.firstName && r.lastName && r.role && r.businessUnit && r.attainment && r.quarter);
+                if (validReps.length === 0) {
+                    alert('Please add at least one rep with all fields filled (including Quarter)');
+                    return;
+                }
+
+                const submissionData = validReps.map(rep => ({
+                    timestamp: new Date().toISOString(),
+                    managerEmail: this.managerEmail,
+                    managerName: this.managerName,
+                    repFirstName: rep.firstName,
+                    repLastName: rep.lastName,
+                    role: rep.role,
+                    businessUnit: rep.businessUnit,
+                    attainment: rep.attainment,
+                    quarter: rep.quarter,
+                    leader: rep.leader || 'N'  // Default to 'N'
+                }));
+
+                let allSubmissions = JSON.parse(localStorage.getItem('all_submissions') || '[]');
+                allSubmissions.push(...submissionData);
+                localStorage.setItem('all_submissions', JSON.stringify(allSubmissions));
+
+                alert('Submitted successfully!');
+                this.reps = [{ firstName: '', lastName: '', role: '', businessUnit: '', attainment: '', quarter: '', leader: 'N' }];
+                this.render();
+            }
+
+            handleBatchUpload(file) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const text = e.target.result;
+                    const lines = text.split('\n').map(line => line.trim()).filter(line => line);
+                    const startIndex = lines[0].toLowerCase().includes('first name') ? 1 : 0;
+                    const reps = [];
+                    for (let i = startIndex; i < lines.length; i++) {
+                        const parts = lines[i].split(',').map(p => p.trim());
+                        if (parts.length >= 5 && parts[0] && parts[1] && parts[2] && parts[3] && parts[4]) {
+                            reps.push({
+                                firstName: parts[0],
+                                lastName: parts[1],
+                                role: parts[2],
+                                businessUnit: parts[3],
+                                attainment: parts[4]
+                            });
+                        }
+                    }
+                    if (reps.length === 0) {
+                        alert('No valid entries found. Make sure CSV has: First Name, Last Name, Role, Business Unit, Attainment %');
+                        return;
+                    }
+                    this.reps = reps;
+                    this.handleSubmit();
+                };
+                reader.readAsText(file);
+            }
+
+            loadReportData() {
+                let data = JSON.parse(localStorage.getItem('all_submissions') || '[]');
+                if (this.filterQuarter) {
+                    const year = this.filterYear.toString();
+                    data = data.filter(r => {
+                        const submissionYear = new Date(r.timestamp).getFullYear().toString();
+                        return r.quarter === this.filterQuarter && submissionYear === year;
+                    });
+                }
+                if (!this.isAdmin) {
+                    data = data.filter(r => r.managerEmail === this.managerEmail);
+                }
+                this.reportData = data;
+            }
+
+            getManagerStatus() {
+                // Get current quarter based on today's date
+                const today = new Date();
+                const month = today.getMonth();
+                let currentQuarter = '';
+                
+                if (month >= 0 && month <= 2) currentQuarter = 'Q1';
+                else if (month >= 3 && month <= 5) currentQuarter = 'Q2';
+                else if (month >= 6 && month <= 8) currentQuarter = 'Q3';
+                else currentQuarter = 'Q4';
+                
+                const currentYear = today.getFullYear().toString();
+                
+                // Get submissions for CURRENT quarter only
+                let allData = JSON.parse(localStorage.getItem('all_submissions') || '[]');
+                const currentQuarterSubmissions = allData.filter(r => {
+                    const submissionYear = new Date(r.timestamp).getFullYear().toString();
+                    return r.quarter === currentQuarter && submissionYear === currentYear;
+                });
+                
+                const submittedEmails = new Set(currentQuarterSubmissions.map(r => r.managerEmail));
+                return this.managers.map(mgr => ({
+                    name: mgr.name,
+                    email: mgr.email,
+                    submitted: submittedEmails.has(mgr.email)
+                }));
+            }
+
+            toggleEditMode() {
+                this.editMode = !this.editMode;
+                this.render();
+            }
+
+            updateReportField(index, field, value) {
+                this.reportData[index][field] = value;
+            }
+
+            saveAllChanges() {
+                if (!confirm('Save all changes?')) return;
+                let allData = JSON.parse(localStorage.getItem('all_submissions') || '[]');
+                for (let report of this.reportData) {
+                    for (let item of allData) {
+                        if (item.timestamp === report.timestamp && item.managerEmail === report.managerEmail) {
+                            item.repFirstName = report.repFirstName;
+                            item.repLastName = report.repLastName;
+                            item.role = report.role;
+                            item.businessUnit = report.businessUnit;
+                            item.attainment = report.attainment;
+                            item.quarter = report.quarter;
+                        }
+                    }
+                }
+                localStorage.setItem('all_submissions', JSON.stringify(allData));
+                this.editMode = false;
+                alert('All changes saved!');
+                this.loadReportData();
+                this.render();
+            }
+
+            cancelEdits() {
+                this.editMode = false;
+                this.loadReportData();
+                this.render();
+            }
+
+            deleteSubmissionRow(index) {
+                if (confirm('Delete this submission?')) {
+                    const rowToDelete = this.reportData[index];
+                    
+                    let allData = JSON.parse(localStorage.getItem('all_submissions') || '[]');
+                    
+                    // Find the exact submission by timestamp and delete only that one
+                    let deleted = false;
+                    for (let i = allData.length - 1; i >= 0; i--) {
+                        if (allData[i].timestamp === rowToDelete.timestamp && allData[i].managerEmail === rowToDelete.managerEmail) {
+                            allData.splice(i, 1);
+                            deleted = true;
+                            break;
+                        }
+                    }
+                    
+                    if (deleted) {
+                        localStorage.setItem('all_submissions', JSON.stringify(allData));
+                        this.loadReportData();
+                        this.render();
+                        alert('Submission deleted');
+                    } else {
+                        alert('Error: Could not find submission to delete');
+                    }
+                }
+            }
+
+            clearAllData() {
+                if (confirm('Delete ALL submissions for ' + this.filterQuarter + ' ' + this.filterYear + '?')) {
+                    let allData = JSON.parse(localStorage.getItem('all_submissions') || '[]');
+                    allData = allData.filter(item => !(item.quarter === this.filterQuarter && new Date(item.timestamp).getFullYear() === this.filterYear));
+                    localStorage.setItem('all_submissions', JSON.stringify(allData));
+                    this.reportData = [];
+                    this.render();
+                    alert('Data cleared!');
+                }
+            }
+
+            generateReminders() {
+                const status = this.getManagerStatus();
+                const notSubmitted = status.filter(s => !s.submitted);
+                if (notSubmitted.length === 0) {
+                    alert('All managers have submitted!');
+                    return;
+                }
+                const emailList = notSubmitted.map(m => m.email).join('; ');
+                const emailBody = `Hello,\n\nReminder: Submit ${this.currentQuarter} Attainment Results by Day 10.\n\nManagers needed:\n${notSubmitted.map(m => `- ${m.name}`).join('\n')}\n\nThank you`;
+                window.location.href = `mailto:?bcc=${emailList}&subject=${this.currentQuarter} Attainment Reminder&body=${encodeURIComponent(emailBody)}`;
+            }
+
+            handleViewReport() {
+                this.viewMode = 'report';
+                this.loadReportData();
+                this.render();
+            }
+
+            handleViewStatus() {
+                this.viewMode = 'status';
+                this.loadReportData();
+                this.render();
+            }
+
+            toggleEditMode(index) {
+                if (this.editingId === index) {
+                    this.editingId = null;
+                } else {
+                    const row = this.reportData[index];
+                    if (!this.isAdmin && row.managerEmail !== this.managerEmail) {
+                        alert('You can only edit your own submissions');
+                        return;
+                    }
+                    this.editingId = index;
+                }
+                this.render();
+            }
+
+            updateSubmissionField(index, field, value) {
+                this.reportData[index][field] = value;
+            }
+
+            saveSubmissionEdit(index) {
+                // Get the sorted manager submissions
+                let allManagerSubmissions = JSON.parse(localStorage.getItem('all_submissions') || '[]');
+                allManagerSubmissions = allManagerSubmissions
+                    .filter(r => r.managerEmail === this.managerEmail)
+                    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+                
+                const editedRow = allManagerSubmissions[index];
+                if (!editedRow.repFirstName || !editedRow.repLastName || !editedRow.role || !editedRow.businessUnit || !editedRow.attainment) {
+                    alert('All fields are required');
+                    return;
+                }
+                
+                let allData = JSON.parse(localStorage.getItem('all_submissions') || '[]');
+                let found = false;
+                
+                for (let i = 0; i < allData.length; i++) {
+                    if (allData[i].timestamp === editedRow.timestamp) {
+                        allData[i].repFirstName = editedRow.repFirstName;
+                        allData[i].repLastName = editedRow.repLastName;
+                        allData[i].role = editedRow.role;
+                        allData[i].businessUnit = editedRow.businessUnit;
+                        allData[i].attainment = editedRow.attainment;
+                        allData[i].quarter = editedRow.quarter;
+                        allData[i].leader = editedRow.leader || 'N';
+                        found = true;
+                        break;
+                    }
+                }
+                
+                if (found) {
+                    localStorage.setItem('all_submissions', JSON.stringify(allData));
+                    this.editingId = null;
+                    this.render();
+                    alert('Submission updated successfully');
+                } else {
+                    alert('Error: Could not find submission to update');
+                }
+            }
+
+            setSortColumn(column) {
+                if (this.sortBy === column) {
+                    this.sortOrder = this.sortOrder === 'asc' ? 'desc' : 'asc';
+                } else {
+                    this.sortBy = column;
+                    this.sortOrder = 'desc';
+                }
+                this.render();
+            }
+
+            deleteSubmissionRowFromReport(timestamp) {
+                if (confirm('Delete this submission?')) {
+                    let allData = JSON.parse(localStorage.getItem('all_submissions') || '[]');
+                    allData = allData.filter(item => item.timestamp !== timestamp);
+                    localStorage.setItem('all_submissions', JSON.stringify(allData));
+                    this.render();
+                }
+            }
+
+            handleExportCSV() {
+                let allData = JSON.parse(localStorage.getItem('all_submissions') || '[]');
+                
+                if (allData.length === 0) {
+                    alert('No submissions to export');
+                    return;
+                }
+                
+                let csv = 'Quarter,Rep First Name,Rep Last Name,Role,Business Unit,Attainment %,Leader,Manager Name,Manager Email,Submission Date\n';
+                allData.forEach(row => {
+                    const date = new Date(row.timestamp).toLocaleDateString();
+                    csv += `${row.quarter},${row.repFirstName},${row.repLastName},${row.role},${row.businessUnit},${row.attainment},${row.leader || 'N'},${row.managerName},${row.managerEmail},${date}\n`;
+                });
+                
+                const blob = new Blob([csv], { type: 'text/csv' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `Attainment_Results_${new Date().toLocaleDateString()}.csv`;
+                a.click();
+            }
+
+            render() {
+                const app = document.getElementById('app');
+                
+                if (!this.isLoggedIn) {
+                    app.innerHTML = `
+                        <div class="min-h-screen sn-header flex items-center justify-center p-4">
+                            <div class="bg-white rounded-lg shadow-xl p-8 w-full max-w-md">
+                                <h1 class="text-3xl font-bold text-gray-900 mb-2">Attainment Results</h1>
+                                <p class="text-gray-600 mb-6">Submit your team's quarterly attainment</p>
+                                <input type="email" id="emailInput" placeholder="your.email@company.com" class="w-full px-4 py-2 border border-gray-300 rounded-lg mb-4 focus:ring-2 focus:ring-yellow-400 text-gray-900">
+                                <button onclick="app.handleLogin(document.getElementById('emailInput').value)" class="w-full sn-btn-primary py-2 rounded-lg">Login</button>
+                                <div class="mt-6 p-4 bg-blue-50 rounded-lg text-sm text-gray-700">
+                                    <p><strong>Deadline:</strong> ${this.currentQuarter} Day 10 (${this.daysUntilDeadline} days left)</p>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    return;
+                }
+
+                let content = '';
+
+                if (this.viewMode === 'input') {
+                    this.loadReportData();
+                    
+                    // For input view, show ALL submissions for this manager (all quarters)
+                    let allManagerSubmissions = JSON.parse(localStorage.getItem('all_submissions') || '[]');
+                    allManagerSubmissions = allManagerSubmissions
+                        .filter(r => r.managerEmail === this.managerEmail)
+                        .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));  // Newest first
+                    
+                    // Form for new entries
+                    const formContent = `
+                        <div class="mb-6">
+                            <h3 class="font-semibold text-lg text-gray-900 mb-4">Add New Rep</h3>
+                            <div class="overflow-x-auto">
+                                <table class="w-full border-collapse">
+                                    <thead>
+                                        <tr class="sn-table-header">
+                                            <th class="px-4 py-3 text-left">Quarter</th>
+                                            <th class="px-4 py-3 text-left">First Name</th>
+                                            <th class="px-4 py-3 text-left">Last Name</th>
+                                            <th class="px-4 py-3 text-left">Role</th>
+                                            <th class="px-4 py-3 text-left">Business Unit</th>
+                                            <th class="px-4 py-3 text-left">Attainment %</th>
+                                            <th class="px-4 py-3 text-left">Leader</th>
+                                            <th class="px-4 py-3 text-center">Action</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${this.reps.map((rep, index) => `
+                                            <tr class="${index % 2 === 0 ? 'sn-zebra' : 'bg-white'} border-b border-gray-300">
+                                                <td class="px-4 py-3"><select onchange="app.handleRepChange(${index}, 'quarter', this.value)" class="w-full px-2 py-1 border border-gray-300 rounded text-sm">
+                                                    <option value="">Select Q</option>
+                                                    ${this.quarters.map(q => `<option value="${q}" ${rep.quarter === q ? 'selected' : ''}>${q}</option>`).join('')}
+                                                </select></td>
+                                                <td class="px-4 py-3"><input type="text" value="${rep.firstName}" onchange="app.handleRepChange(${index}, 'firstName', this.value)" class="w-full px-2 py-1 border border-gray-300 rounded" placeholder="First name"></td>
+                                                <td class="px-4 py-3"><input type="text" value="${rep.lastName}" onchange="app.handleRepChange(${index}, 'lastName', this.value)" class="w-full px-2 py-1 border border-gray-300 rounded" placeholder="Last name"></td>
+                                                <td class="px-4 py-3"><select onchange="app.handleRepChange(${index}, 'role', this.value)" class="w-full px-2 py-1 border border-gray-300 rounded text-sm">
+                                                    <option value="">Role</option>
+                                                    ${this.roles.map(r => `<option value="${r}" ${rep.role === r ? 'selected' : ''}>${r}</option>`).join('')}
+                                                </select></td>
+                                                <td class="px-4 py-3"><select onchange="app.handleRepChange(${index}, 'businessUnit', this.value)" class="w-full px-2 py-1 border border-gray-300 rounded text-sm">
+                                                    <option value="">BU</option>
+                                                    ${this.businessUnits.map(bu => `<option value="${bu}" ${rep.businessUnit === bu ? 'selected' : ''}>${bu}</option>`).join('')}
+                                                </select></td>
+                                                <td class="px-4 py-3"><input type="number" value="${rep.attainment}" onchange="app.handleRepChange(${index}, 'attainment', this.value)" class="w-full px-2 py-1 border border-gray-300 rounded" placeholder="%"></td>
+                                                <td class="px-4 py-3"><select onchange="app.handleRepChange(${index}, 'leader', this.value)" class="w-full px-2 py-1 border border-gray-300 rounded text-sm">
+                                                    <option value="Y" ${rep.leader === 'Y' ? 'selected' : ''}>Y</option>
+                                                    <option value="N" ${rep.leader === 'N' ? 'selected' : ''}>N</option>
+                                                </select></td>
+                                                <td class="px-4 py-3 text-center">${this.reps.length > 1 ? `<button type="button" onclick="app.handleRemoveRep(${index})" class="text-red-600 hover:text-red-800 font-semibold text-sm">Delete</button>` : '-'}</td>
+                                            </tr>
+                                        `).join('')}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <div class="flex gap-2 mb-6">
+                            <button type="button" onclick="app.handleAddRep()" class="text-blue-600 font-semibold hover:text-blue-800">+ Add Another Rep</button>
+                            <button type="submit" class="sn-btn-primary px-6 py-2 rounded-lg font-semibold">Submit New Results</button>
+                        </div>
+                    `;
+
+                    // Existing submissions for all quarters
+                    const submissionsHTML = allManagerSubmissions.length === 0 ? 
+                        `<p class="text-gray-600 text-center py-8">No submissions yet</p>` :
+                        `<div class="overflow-x-auto">
+                            <table class="w-full text-sm border-collapse">
+                                <thead>
+                                    <tr class="sn-table-header">
+                                        <th class="px-4 py-3 text-left">Quarter</th>
+                                        <th class="px-4 py-3 text-left">First Name</th>
+                                        <th class="px-4 py-3 text-left">Last Name</th>
+                                        <th class="px-4 py-3 text-left">Role</th>
+                                        <th class="px-4 py-3 text-left">Business Unit</th>
+                                        <th class="px-4 py-3 text-left">Attainment %</th>
+                                        <th class="px-4 py-3 text-left">Date</th>
+                                        <th class="px-4 py-3 text-center">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${allManagerSubmissions.map((row, idx) => {
+                                        const isEditing = this.editingId === idx;
+                                        return `
+                                            <tr class="${idx % 2 === 0 ? 'sn-zebra' : 'bg-white'} border-b border-gray-300">
+                                                <td class="px-4 py-3">${isEditing ? `<select onchange="app.updateSubmissionField(${idx}, 'quarter', this.value)" class="w-full px-2 py-1 border border-gray-300 rounded text-sm">
+                                                    ${this.quarters.map(q => `<option value="${q}" ${row.quarter === q ? 'selected' : ''}>${q}</option>`).join('')}
+                                                </select>` : row.quarter}</td>
+                                                <td class="px-4 py-3">${isEditing ? `<input type="text" value="${row.repFirstName}" onchange="app.updateSubmissionField(${idx}, 'repFirstName', this.value)" class="w-full px-2 py-1 border border-gray-300 rounded text-sm">` : row.repFirstName}</td>
+                                                <td class="px-4 py-3">${isEditing ? `<input type="text" value="${row.repLastName}" onchange="app.updateSubmissionField(${idx}, 'repLastName', this.value)" class="w-full px-2 py-1 border border-gray-300 rounded text-sm">` : row.repLastName}</td>
+                                                <td class="px-4 py-3">${isEditing ? `<select onchange="app.updateSubmissionField(${idx}, 'role', this.value)" class="w-full px-2 py-1 border border-gray-300 rounded text-sm">
+                                                    ${this.roles.map(r => `<option value="${r}" ${row.role === r ? 'selected' : ''}>${r}</option>`).join('')}
+                                                </select>` : row.role}</td>
+                                                <td class="px-4 py-3">${isEditing ? `<select onchange="app.updateSubmissionField(${idx}, 'businessUnit', this.value)" class="w-full px-2 py-1 border border-gray-300 rounded text-sm">
+                                                    ${this.businessUnits.map(bu => `<option value="${bu}" ${row.businessUnit === bu ? 'selected' : ''}>${bu}</option>`).join('')}
+                                                </select>` : row.businessUnit}</td>
+                                                <td class="px-4 py-3">${isEditing ? `<input type="number" value="${row.attainment}" onchange="app.updateSubmissionField(${idx}, 'attainment', this.value)" class="w-full px-2 py-1 border border-gray-300 rounded text-sm">` : row.attainment}%</td>
+                                                <td class="px-4 py-3 text-sm">${new Date(row.timestamp).toLocaleDateString()}</td>
+                                                <td class="px-4 py-3 text-center">
+                                                    ${isEditing ? 
+                                                        `<button onclick="app.saveSubmissionEdit(${idx})" class="text-green-600 hover:text-green-800 font-semibold text-sm mr-2">Save</button>
+                                                         <button onclick="app.toggleEditMode(${idx})" class="text-gray-600 hover:text-gray-800 font-semibold text-sm">Cancel</button>` :
+                                                        `<button onclick="app.toggleEditMode(${idx})" class="text-blue-600 hover:text-blue-800 font-semibold text-sm">Edit</button>`
+                                                    }
+                                                </td>
+                                            </tr>
+                                        `;
+                                    }).join('')}
+                                </tbody>
+                            </table>
+                        </div>`;
+
+                    content = `
+                        <div class="bg-white rounded-lg shadow-lg p-6">
+                            <div class="mb-8">
+                                <h2 class="text-2xl font-bold sn-accent mb-6">Enter New Submissions</h2>
+                                <form onsubmit="event.preventDefault(); app.handleSubmit()">
+                                    ${formContent}
+                                </form>
+                            </div>
+
+                            <hr class="my-8 border-gray-300">
+
+                            <div>
+                                <h2 class="text-2xl font-bold sn-accent mb-6">Your Submissions (All Quarters)</h2>
+                                ${submissionsHTML}
+                            </div>
+                        </div>
+                    `;
+                } else if (this.viewMode === 'report') {
+                    // For admin: show ALL submissions sorted
+                    let allData = JSON.parse(localStorage.getItem('all_submissions') || '[]');
+                    
+                    // Default sort by timestamp (newest first)
+                    if (!this.sortBy) {
+                        this.sortBy = 'timestamp';
+                        this.sortOrder = 'desc';
+                    }
+                    
+                    // Apply sorting
+                    allData.sort((a, b) => {
+                        let aVal = a[this.sortBy];
+                        let bVal = b[this.sortBy];
+                        if (this.sortBy === 'timestamp') {
+                            aVal = new Date(aVal);
+                            bVal = new Date(bVal);
+                        } else if (this.sortBy === 'attainment') {
+                            aVal = parseInt(aVal);
+                            bVal = parseInt(bVal);
+                        }
+                        if (this.sortOrder === 'asc') {
+                            return aVal > bVal ? 1 : -1;
+                        } else {
+                            return aVal < bVal ? 1 : -1;
+                        }
+                    });
+                    
+                    const tableHTML = allData.length === 0 ? '<p class="text-gray-600 text-center py-8">No submissions</p>' : `
+                        <div class="overflow-x-auto">
+                            <table class="w-full text-sm border-collapse">
+                                <thead>
+                                    <tr class="sn-table-header">
+                                        <th class="px-4 py-3 text-left cursor-pointer hover:opacity-70" onclick="app.setSortColumn('quarter')">Quarter ${this.sortBy === 'quarter' ? (this.sortOrder === 'asc' ? '↑' : '↓') : ''}</th>
+                                        <th class="px-4 py-3 text-left cursor-pointer hover:opacity-70" onclick="app.setSortColumn('repFirstName')">First Name ${this.sortBy === 'repFirstName' ? (this.sortOrder === 'asc' ? '↑' : '↓') : ''}</th>
+                                        <th class="px-4 py-3 text-left cursor-pointer hover:opacity-70" onclick="app.setSortColumn('repLastName')">Last Name ${this.sortBy === 'repLastName' ? (this.sortOrder === 'asc' ? '↑' : '↓') : ''}</th>
+                                        <th class="px-4 py-3 text-left cursor-pointer hover:opacity-70" onclick="app.setSortColumn('role')">Role ${this.sortBy === 'role' ? (this.sortOrder === 'asc' ? '↑' : '↓') : ''}</th>
+                                        <th class="px-4 py-3 text-left cursor-pointer hover:opacity-70" onclick="app.setSortColumn('businessUnit')">Business Unit ${this.sortBy === 'businessUnit' ? (this.sortOrder === 'asc' ? '↑' : '↓') : ''}</th>
+                                        <th class="px-4 py-3 text-left cursor-pointer hover:opacity-70" onclick="app.setSortColumn('attainment')">Attainment % ${this.sortBy === 'attainment' ? (this.sortOrder === 'asc' ? '↑' : '↓') : ''}</th>
+                                        <th class="px-4 py-3 text-left cursor-pointer hover:opacity-70" onclick="app.setSortColumn('leader')">Leader ${this.sortBy === 'leader' ? (this.sortOrder === 'asc' ? '↑' : '↓') : ''}</th>
+                                        <th class="px-4 py-3 text-left cursor-pointer hover:opacity-70" onclick="app.setSortColumn('managerName')">Manager Name ${this.sortBy === 'managerName' ? (this.sortOrder === 'asc' ? '↑' : '↓') : ''}</th>
+                                        <th class="px-4 py-3 text-left cursor-pointer hover:opacity-70" onclick="app.setSortColumn('managerEmail')">Manager Email ${this.sortBy === 'managerEmail' ? (this.sortOrder === 'asc' ? '↑' : '↓') : ''}</th>
+                                        <th class="px-4 py-3 text-left cursor-pointer hover:opacity-70" onclick="app.setSortColumn('timestamp')">Date ${this.sortBy === 'timestamp' ? (this.sortOrder === 'asc' ? '↑' : '↓') : ''}</th>
+                                        <th class="px-4 py-3 text-center">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${allData.map((row, idx) => {
+                                        const isEditing = this.editingId === idx;
+                                        return `
+                                            <tr class="${idx % 2 === 0 ? 'sn-zebra' : 'bg-white'} border-b border-gray-300">
+                                                <td class="px-4 py-3">${isEditing ? `<select onchange="app.updateSubmissionField(${idx}, 'quarter', this.value)" class="w-full px-2 py-1 border border-gray-300 rounded text-sm">
+                                                    ${this.quarters.map(q => `<option value="${q}" ${row.quarter === q ? 'selected' : ''}>${q}</option>`).join('')}
+                                                </select>` : row.quarter}</td>
+                                                <td class="px-4 py-3">${isEditing ? `<input type="text" value="${row.repFirstName}" onchange="app.updateSubmissionField(${idx}, 'repFirstName', this.value)" class="w-full px-2 py-1 border border-gray-300 rounded text-sm">` : row.repFirstName}</td>
+                                                <td class="px-4 py-3">${isEditing ? `<input type="text" value="${row.repLastName}" onchange="app.updateSubmissionField(${idx}, 'repLastName', this.value)" class="w-full px-2 py-1 border border-gray-300 rounded text-sm">` : row.repLastName}</td>
+                                                <td class="px-4 py-3">${isEditing ? `<select onchange="app.updateSubmissionField(${idx}, 'role', this.value)" class="w-full px-2 py-1 border border-gray-300 rounded text-sm">
+                                                    ${this.roles.map(r => `<option value="${r}" ${row.role === r ? 'selected' : ''}>${r}</option>`).join('')}
+                                                </select>` : row.role}</td>
+                                                <td class="px-4 py-3">${isEditing ? `<select onchange="app.updateSubmissionField(${idx}, 'businessUnit', this.value)" class="w-full px-2 py-1 border border-gray-300 rounded text-sm">
+                                                    ${this.businessUnits.map(bu => `<option value="${bu}" ${row.businessUnit === bu ? 'selected' : ''}>${bu}</option>`).join('')}
+                                                </select>` : row.businessUnit}</td>
+                                                <td class="px-4 py-3">${isEditing ? `<input type="number" value="${row.attainment}" onchange="app.updateSubmissionField(${idx}, 'attainment', this.value)" class="w-full px-2 py-1 border border-gray-300 rounded text-sm">` : row.attainment}%</td>
+                                                <td class="px-4 py-3">${isEditing ? `<select onchange="app.updateSubmissionField(${idx}, 'leader', this.value)" class="w-full px-2 py-1 border border-gray-300 rounded text-sm">
+                                                    <option value="Y" ${row.leader === 'Y' ? 'selected' : ''}>Y</option>
+                                                    <option value="N" ${row.leader === 'N' ? 'selected' : ''}>N</option>
+                                                </select>` : (row.leader || 'N')}</td>
+                                                <td class="px-4 py-3">${isEditing ? `<select onchange="app.updateSubmissionField(${idx}, 'managerName', this.value)" class="w-full px-2 py-1 border border-gray-300 rounded text-sm">
+                                                    ${this.managers.map(m => `<option value="${m.name}" ${row.managerName === m.name ? 'selected' : ''}>${m.name}</option>`).join('')}
+                                                </select>` : row.managerName}</td>
+                                                <td class="px-4 py-3">${isEditing ? `<select onchange="app.updateSubmissionField(${idx}, 'managerEmail', this.value)" class="w-full px-2 py-1 border border-gray-300 rounded text-sm">
+                                                    ${this.managers.map(m => `<option value="${m.email}" ${row.managerEmail === m.email ? 'selected' : ''}>${m.email}</option>`).join('')}
+                                                </select>` : row.managerEmail}</td>
+                                                <td class="px-4 py-3 text-sm">${new Date(row.timestamp).toLocaleDateString()}</td>
+                                                <td class="px-4 py-3 text-center">
+                                                    ${isEditing ? 
+                                                        `<button onclick="app.saveSubmissionEdit(${idx})" class="text-green-600 hover:text-green-800 font-semibold text-sm mr-2">Save</button>
+                                                         <button onclick="app.toggleEditMode(${idx})" class="text-gray-600 hover:text-gray-800 font-semibold text-sm">Cancel</button>` :
+                                                        `<button onclick="app.toggleEditMode(${idx})" class="text-blue-600 hover:text-blue-800 font-semibold text-sm">Edit</button>`
+                                                    }
+                                                    ${!isEditing ? `<button onclick="app.deleteSubmissionRowFromReport('${row.timestamp}')" class="text-red-600 hover:text-red-800 font-semibold text-sm ml-2">Delete</button>` : ''}
+                                                </td>
+                                            </tr>
+                                        `;
+                                    }).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+                    `;
+
+                    content = `
+                        <div class="bg-white rounded-lg shadow-lg p-6">
+                            <div class="flex justify-between items-center mb-6">
+                                <h2 class="text-2xl font-bold sn-accent">All Submissions</h2>
+                                <button onclick="app.handleExportCSV()" class="sn-btn-primary px-4 py-2 rounded-lg text-sm">📥 Export CSV</button>
+                            </div>
+                            <p class="text-gray-600 text-sm mb-4">Click column headers to sort</p>
+                            ${tableHTML}
+                        </div>
+                    `;
+                } else if (this.viewMode === 'status' && this.isAdmin) {
+                    const status = this.getManagerStatus();
+                    const submitted = status.filter(s => s.submitted);
+                    const notSubmitted = status.filter(s => !s.submitted);
+
+                    content = `
+                        <div class="bg-white rounded-lg shadow-lg p-6">
+                            <h2 class="text-2xl font-bold sn-accent mb-4">Manager Status</h2>
+                            <button onclick="app.generateReminders()" class="bg-red-600 text-white px-6 py-2 rounded-lg hover:bg-red-700 font-semibold mb-6">📧 Send Reminders</button>
+                            <div class="grid grid-cols-2 gap-6">
+                                <div>
+                                    <h3 class="font-semibold text-lg text-green-700 mb-4">✓ Submitted (${submitted.length})</h3>
+                                    <div class="space-y-2">
+                                        ${submitted.map(m => `<div class="p-3 bg-green-50 border border-green-300 rounded">
+                                            <p class="font-medium">${m.name}</p>
+                                            <p class="text-sm text-gray-600">${m.email}</p>
+                                        </div>`).join('')}
+                                    </div>
+                                </div>
+                                <div>
+                                    <h3 class="font-semibold text-lg text-red-700 mb-4">✗ Pending (${notSubmitted.length})</h3>
+                                    <div class="space-y-2">
+                                        ${notSubmitted.map(m => `<div class="p-3 bg-red-50 border border-red-300 rounded">
+                                            <p class="font-medium">${m.name}</p>
+                                            <p class="text-sm text-gray-600">${m.email}</p>
+                                        </div>`).join('')}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                } else if (this.viewMode === 'status' && !this.isAdmin) {
+                    content = `<div class="bg-white rounded-lg shadow-lg p-6"><p class="text-gray-600">Admin only.</p></div>`;
+                }
+
+                const tabs = this.isAdmin ? `
+                    <div class="flex gap-4 border-b border-gray-300">
+                        <button onclick="app.viewMode = 'input'; app.render()" class="px-4 py-2 ${this.viewMode === 'input' ? 'sn-tab-active' : 'text-gray-600'}">Submit</button>
+                        <button onclick="app.viewMode = 'report'; app.render()" class="px-4 py-2 ${this.viewMode === 'report' ? 'sn-tab-active' : 'text-gray-600'}">Report</button>
+                        <button onclick="app.viewMode = 'status'; app.render()" class="px-4 py-2 ${this.viewMode === 'status' ? 'sn-tab-active' : 'text-gray-600'}">Status</button>
+                    </div>
+                ` : `<div></div>`;
+
+                app.innerHTML = `
+                    <div class="min-h-screen bg-white">
+                        <div class="sn-header py-6 px-4 shadow">
+                            <div class="max-w-6xl mx-auto flex justify-between items-center">
+                                <div>
+                                    <h1 class="text-3xl font-bold">${this.currentQuarter} Attainment Results</h1>
+                                    <p class="text-gray-300 mt-1">${this.managerName}</p>
+                                </div>
+                                <div class="text-right">
+                                    <p class="text-yellow-300 font-semibold mb-2">${this.daysUntilDeadline} days left</p>
+                                    <button onclick="app.handleLogout()" class="text-yellow-300 hover:text-white text-sm">Logout</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="max-w-6xl mx-auto p-6">
+                            <div class="bg-white rounded-lg shadow-lg p-6 mb-6">
+                                ${tabs}
+                            </div>
+                            ${content}
+                        </div>
+                    </div>
+                `;
+            }
+        }
+
+        const app = new AttainmentApp();
+    </script>
+</body>
+</html>
