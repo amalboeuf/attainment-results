@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Attainment Results Collection</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+        .sn-header { background: #032D42; color: white; }
+        .sn-accent { color: #63DF4E; }
+        .sn-btn-primary { background: #63DF4E; color: #032D42; font-weight: 600; }
+        .sn-btn-primary:hover { opacity: 0.9; }
+        .sn-tab-active { border-bottom: 3px solid #63DF4E; color: #63DF4E; font-weight: 600; }
+        .sn-table-header { background: #81B5A1; color: white; font-weight: 600; }
+        .sn-zebra { background: #F4F4F4; }
+        .error-msg { background: #fee; border: 1px solid #fcc; color: #c00; padding: 12px; border-radius: 4px; margin-bottom: 16px; }
+        .success-msg { background: #efe; border: 1px solid #cfc; color: #060; padding: 12px; border-radius: 4px; margin-bottom: 16px; }
+    </style>
+</head>
+<body class="bg-white">
+    <div id="app"></div>
+
+    <script>
+        // === SHAREPOINT CONFIGURATION ===
+        const SHAREPOINT_CONFIG = {
+            siteUrl: 'https://servicenow.sharepoint.com/sites/TeamOneEast',
+            listName: 'Attainment Results'
+        };
+
+        class AttainmentApp {
+            constructor() {
+                this.isLoggedIn = false;
+                this.managerEmail = '';
+                this.managerName = '';
+                this.isAdmin = false;
+                this.viewMode = 'input';
+                this.inputMethod = 'form';
+                this.currentQuarter = '';
+                this.selectedQuarter = '';
+                this.filterQuarter = '';
+                this.filterYear = new Date().getFullYear();
+                this.daysUntilDeadline = 0;
+                this.reps = [{ firstName: '', lastName: '', role: '', businessUnit: '', attainment: '', quarter: '', leader: 'N' }];
+                this.reportData = [];
+                this.editMode = false;
+                this.editingId = null;
+                this.adminEmail = 'alicia.malboeuf@servicenow.com';
+                this.spContext = window._spPageContextInfo;
+                this.roles = ['AE', 'SC', 'SSE', 'SSC', 'EA', 'Expert Services', 'RAM', 'ESA'];
+                this.quarters = ['Q1', 'Q2', 'Q3', 'Q4'];
+                this.businessUnits = ['GPC', 'Expert Services', 'Renewals', 'Enterprise Architects', 'CRM & Industry', 'TX', 'Risk', 'Security', 'Risk & Security', 'Core Services', 'Data & Analytics', 'Platform & AI'];
+                this.managers = [
+                    { name: 'Kris Wohlart', email: 'kris.wohlart@servicenow.com' },
+                    { name: 'Marc Spigel', email: 'Marc.Spigel@servicenow.com' },
+                    { name: 'Jeff Whelan', email: 'jeff.whelan@servicenow.com' },
+                    { name: 'Bruce Freilich', email: 'bruce.freilich@servicenow.com' },
+                    { name: 'Karen Stauffer', email: 'Karen.stauffer@servicenow.com' },
+                    { name: 'Anthony Giacchetto', email: 'anthony.giacchetto@servicenow.com' },
+                    { name: 'Benjamin James', email: 'benjamin.james@servicenow.com' },
+                    { name: 'Andrew Koch', email: 'andrew.koch@servicenow.com' },
+                    { name: 'Cliff Harris', email: 'cliff.harris@servicenow.com' },
+                    { name: 'Joe Montgomery', email: 'joseph.montgomery@servicenow.com' },
+                    { name: 'Jennifer Rosene', email: 'jennifer.rosene@servicenow.com' },
+                    { name: 'Kelsey Collins', email: 'kelsey.collins@servicenow.com' },
+                    { name: 'Hugo Rodriguez', email: 'hugo.rodriguez@servicenow.com' }
+                ];
+                this.init();
+            }
+
+            // === SHAREPOINT API FUNCTIONS ===
+            async getListItems() {
+                try {
+                    const url = `${SHAREPOINT_CONFIG.siteUrl}/_api/web/lists/getbytitle('${SHAREPOINT_CONFIG.listName}')/items?$select=*&$top=5000`;
+                    const response = await fetch(url, {
+                        headers: { 'Accept': 'application/json;odata=verbose' }
+                    });
+                    if (!response.ok) throw new Error('Failed to read from SharePoint list');
+                    const data = await response.json();
+                    return data.d.results || [];
+                } catch (error) {
+                    console.error('Error reading SharePoint list:', error);
+                    return [];
+                }
+            }
+
+            async createListItem(itemData) {
+                try {
+                    const url = `${SHAREPOINT_CONFIG.siteUrl}/_api/web/lists/getbytitle('${SHAREPOINT_CONFIG.listName}')/items`;
+                    const item = {
+                        '__metadata': { 'type': 'SP.Data.Attainment_x0020_ResultsListItem' },
+                        'Title': this.managerName,
+                        'Quarter': itemData.quarter,
+                        'First_x0020_Name': itemData.firstName,
+                        'Last_x0020_Name': itemData.lastName,
+                        'Role': itemData.role,
+                        'Workflow_x002f_BU': itemData.businessUnit,
+                        'Attainment_x0025': parseInt(itemData.attainment),
+                        'Leader': itemData.leader || 'N'
+                    };
+
+                    const response = await fetch(url, {
+                        method: 'POST',
+                        headers: {
+                            'Accept': 'application/json;odata=verbose',
+                            'Content-Type': 'application/json;odata=verbose',
+                            'X-RequestDigest': document.getElementById('__REQUESTDIGEST')?.value || ''
+                        },
+                        body: JSON.stringify(item)
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`Failed to create item: ${response.statusText}`);
+                    }
+                    return true;
+                } catch (error) {
+                    console.error('Error creating SharePoint item:', error);
+                    throw error;
+                }
+            }
+
+            async deleteListItem(itemId) {
+                try {
+                    const url = `${SHAREPOINT_CONFIG.siteUrl}/_api/web/lists/getbytitle('${SHAREPOINT_CONFIG.listName}')/items(${itemId})`;
+                    const response = await fetch(url, {
+                        method: 'POST',
+                        headers: {
+                            'Accept': 'application/json;odata=verbose',
+                            'X-RequestDigest': document.getElementById('__REQUESTDIGEST')?.value || '',
+                            'IF-MATCH': '*',
+                            'X-HTTP-Method': 'DELETE'
+                        }
+                    });
+
+                    if (!response.ok) {
+                        throw new Error(`Failed to delete item: ${response.statusText}`);
+                    }
+                    return true;
+                } catch (error) {
+                    console.error('Error deleting SharePoint item:', error);
+                    throw error;
+                }
+            }
+
+            // === ORIGINAL APP METHODS (ADAPTED) ===
+            handleQuarterChange(quarter) {
+                this.selectedQuarter = quarter;
+                this.loadReportData();
+                this.render();
+            }
+
+            async loadReportData() {
+                const items = await this.getListItems();
+                let data = items.map(item => ({
+                    id: item.ID,
+                    timestamp: item.Created,
+                    quarter: item.Quarter,
+                    repFirstName: item.First_x0020_Name || '',
+                    repLastName: item.Last_x0020_Name || '',
+                    role: item.Role || '',
+                    businessUnit: item.Workflow_x002f_BU || '',
+                    attainment: item.Attainment_x0025 || '',
+                    leader: item.Leader || 'N',
+                    managerName: item.Title || '',
+                    managerEmail: this.managerEmail
+                }));
+
+                const quarterToFilter = this.viewMode === 'report' ? this.filterQuarter : this.selectedQuarter;
+                const yearToFilter = this.viewMode === 'report' ? this.filterYear : new Date().getFullYear();
+
+                if (quarterToFilter) {
+                    const year = yearToFilter.toString();
+                    data = data.filter(r => {
+                        const submissionYear = new Date(r.timestamp).getFullYear().toString();
+                        return r.quarter === quarterToFilter && submissionYear === year;
+                    });
+                }
+
+                if (!this.isAdmin) {
+                    data = data.filter(r => r.managerName === this.managerName);
+                }
+
+                this.reportData = data;
+            }
+
+            init() {
+                this.calculateDeadline();
+                this.filterQuarter = this.currentQuarter;
+                this.loadReportData();
+                this.render();
+            }
+
+            calculateDeadline() {
+                const today = new Date();
+                const currentMonth = today.getMonth();
+                const currentYear = today.getFullYear();
+
+                const deadlines = [
+                    { month: 0, day: 10, quarter: 'Q1' },
+                    { month: 3, day: 10, quarter: 'Q2' },
+                    { month: 6, day: 10, quarter: 'Q3' },
+                    { month: 9, day: 10, quarter: 'Q4' }
+                ];
+
+                let nextDeadline = null;
+
+                for (let deadline of deadlines) {
+                    const deadlineDate = new Date(currentYear, deadline.month, deadline.day);
+                    if (deadlineDate >= today) {
+                        nextDeadline = deadlineDate;
+                        this.currentQuarter = deadline.quarter;
+                        break;
+                    }
+                }
+
+                if (!nextDeadline) {
+                    const firstDeadline = new Date(currentYear + 1, 0, 10);
+                    nextDeadline = firstDeadline;
+                    this.currentQuarter = 'Q1';
+                }
+
+                const timeDifference = nextDeadline - today;
+                this.daysUntilDeadline = Math.ceil(timeDifference / (1000 * 3600 * 24));
+            }
+
+            handleRepChange(index, field, value) {
+                this.reps[index][field] = value;
+                this.render();
+            }
+
+            handleAddRep() {
+                this.reps.push({ firstName: '', lastName: '', role: '', businessUnit: '', attainment: '', quarter: '', leader: 'N' });
+                this.render();
+            }
+
+            handleRemoveRep(index) {
+                this.reps.splice(index, 1);
+                this.render();
+            }
+
+            async handleSubmit(e) {
+                e.preventDefault();
+                const validReps = this.reps.filter(rep => 
+                    rep.firstName && rep.lastName && rep.role && rep.businessUnit && rep.attainment && rep.quarter
+                );
+
+                if (validReps.length === 0) {
+                    alert('Please fill in all required fields');
+                    return;
+                }
+
+                try {
+                    for (const rep of validReps) {
+                        await this.createListItem(rep);
+                    }
+                    alert(`Successfully submitted ${validReps.length} rep(s) to SharePoint!`);
+                    this.reps = [{ firstName: '', lastName: '', role: '', businessUnit: '', attainment: '', quarter: '', leader: 'N' }];
+                    await this.loadReportData();
+                    this.render();
+                } catch (error) {
+                    alert(`Error: ${error.message}`);
+                }
+            }
+
+            async handleLogout() {
+                this.isLoggedIn = false;
+                this.managerEmail = '';
+                this.managerName = '';
+                this.render();
+            }
+
+            handleLogin() {
+                const email = prompt('Enter your email:');
+                if (!email) return;
+
+                const manager = this.managers.find(m => m.email.toLowerCase() === email.toLowerCase());
+                if (!manager) {
+                    alert('Email not found in manager list');
+                    return;
+                }
+
+                this.managerEmail = manager.email;
+                this.managerName = manager.name;
+                this.isAdmin = manager.email === this.adminEmail;
+                this.isLoggedIn = true;
+                this.loadReportData();
+                this.render();
+            }
+
+            getManagerStatus() {
+                const currentQuarter = this.currentQuarter;
+                const uniqueManagers = [...new Map(this.managers.map(m => [m.email, m])).values()];
+
+                return uniqueManagers.map(manager => {
+                    const hasSubmitted = this.reportData.some(r => 
+                        r.managerName === manager.name && r.quarter === currentQuarter
+                    );
+                    return {
+                        name: manager.name,
+                        email: manager.email,
+                        submitted: hasSubmitted
+                    };
+                });
+            }
+
+            toggleEditMode(index) {
+                if (this.editingId === index) {
+                    this.editingId = null;
+                } else {
+                    this.editingId = index;
+                }
+                this.render();
+            }
+
+            updateSubmissionField(index, field, value) {
+                if (this.reportData[index]) {
+                    this.reportData[index][field] = value;
+                }
+            }
+
+            saveSubmissionEdit(index) {
+                alert('Direct edit in SharePoint is coming soon. For now, delete and re-add.');
+                this.editingId = null;
+                this.render();
+            }
+
+            async deleteSubmissionRowFromReport(timestamp) {
+                const item = this.reportData.find(r => r.timestamp === timestamp);
+                if (item && confirm('Delete this submission?')) {
+                    try {
+                        await this.deleteListItem(item.id);
+                        await this.loadReportData();
+                        this.render();
+                    } catch (error) {
+                        alert(`Error deleting: ${error.message}`);
+                    }
+                }
+            }
+
+            handleExportCSV() {
+                let csv = 'Quarter,First Name,Last Name,Role,Business Unit,Attainment %,Leader,Manager,Date\n';
+                this.reportData.forEach(r => {
+                    csv += `${r.quarter},${r.repFirstName},${r.repLastName},${r.role},${r.businessUnit},${r.attainment},${r.leader},${r.managerName},${new Date(r.timestamp).toLocaleDateString()}\n`;
+                });
+                const blob = new Blob([csv], { type: 'text/csv' });
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'attainment_results.csv';
+                a.click();
+            }
+
+            generateReminders() {
+                const status = this.getManagerStatus();
+                const notSubmitted = status.filter(s => !s.submitted);
+                if (notSubmitted.length === 0) {
+                    alert('All managers have submitted!');
+                    return;
+                }
+                alert(`Reminders would be sent to:\n${notSubmitted.map(m => m.email).join('\n')}`);
+            }
+
+            render() {
+                const app = document.getElementById('app');
+
+                if (!this.isLoggedIn) {
+                    app.innerHTML = `
+                        <div class="sn-header py-6 px-4 shadow">
+                            <h1 class="text-3xl font-bold">Attainment Results</h1>
+                        </div>
+                        <div class="flex items-center justify-center min-h-screen bg-gray-100">
+                            <div class="bg-white p-8 rounded-lg shadow-lg">
+                                <h2 class="text-2xl font-bold mb-4">Login</h2>
+                                <button onclick="app.handleLogin()" class="sn-btn-primary px-6 py-2 rounded-lg">Sign In</button>
+                            </div>
+                        </div>
+                    `;
+                    return;
+                }
+
+                let content = '';
+
+                if (this.viewMode === 'input') {
+                    content = `
+                        <div class="bg-white rounded-lg shadow-lg p-6">
+                            <h2 class="text-2xl font-bold sn-accent mb-4">Submit Results</h2>
+                            <form onsubmit="app.handleSubmit(event)">
+                                <div class="overflow-x-auto mb-6">
+                                    <table class="w-full border-collapse">
+                                        <thead>
+                                            <tr class="sn-table-header">
+                                                <th class="px-4 py-3 text-left">Quarter</th>
+                                                <th class="px-4 py-3 text-left">First Name</th>
+                                                <th class="px-4 py-3 text-left">Last Name</th>
+                                                <th class="px-4 py-3 text-left">Role</th>
+                                                <th class="px-4 py-3 text-left">Business Unit</th>
+                                                <th class="px-4 py-3 text-left">Attainment %</th>
+                                                <th class="px-4 py-3 text-left">Leader</th>
+                                                <th class="px-4 py-3 text-center">Action</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            ${this.reps.map((rep, index) => `
+                                                <tr class="${index % 2 === 0 ? 'sn-zebra' : 'bg-white'} border-b border-gray-300">
+                                                    <td class="px-4 py-3"><select onchange="app.handleRepChange(${index}, 'quarter', this.value)" class="w-full px-2 py-1 border border-gray-300 rounded text-sm">
+                                                        <option value="">Select</option>
+                                                        ${this.quarters.map(q => `<option value="${q}" ${rep.quarter === q ? 'selected' : ''}>${q}</option>`).join('')}
+                                                    </select></td>
+                                                    <td class="px-4 py-3"><input type="text" value="${rep.firstName}" onchange="app.handleRepChange(${index}, 'firstName', this.value)" class="w-full px-2 py-1 border border-gray-300 rounded"></td>
+                                                    <td class="px-4 py-3"><input type="text" value="${rep.lastName}" onchange="app.handleRepChange(${index}, 'lastName', this.value)" class="w-full px-2 py-1 border border-gray-300 rounded"></td>
+                                                    <td class="px-4 py-3"><select onchange="app.handleRepChange(${index}, 'role', this.value)" class="w-full px-2 py-1 border border-gray-300 rounded text-sm">
+                                                        <option value="">Select</option>
+                                                        ${this.roles.map(r => `<option value="${r}" ${rep.role === r ? 'selected' : ''}>${r}</option>`).join('')}
+                                                    </select></td>
+                                                    <td class="px-4 py-3"><select onchange="app.handleRepChange(${index}, 'businessUnit', this.value)" class="w-full px-2 py-1 border border-gray-300 rounded text-sm">
+                                                        <option value="">Select</option>
+                                                        ${this.businessUnits.map(bu => `<option value="${bu}" ${rep.businessUnit === bu ? 'selected' : ''}>${bu}</option>`).join('')}
+                                                    </select></td>
+                                                    <td class="px-4 py-3"><input type="number" value="${rep.attainment}" onchange="app.handleRepChange(${index}, 'attainment', this.value)" class="w-full px-2 py-1 border border-gray-300 rounded"></td>
+                                                    <td class="px-4 py-3"><select onchange="app.handleRepChange(${index}, 'leader', this.value)" class="w-full px-2 py-1 border border-gray-300 rounded text-sm">
+                                                        <option value="Y" ${rep.leader === 'Y' ? 'selected' : ''}>Y</option>
+                                                        <option value="N" ${rep.leader === 'N' ? 'selected' : ''}>N</option>
+                                                    </select></td>
+                                                    <td class="px-4 py-3 text-center">${this.reps.length > 1 ? `<button type="button" onclick="app.handleRemoveRep(${index})" class="text-red-600">Delete</button>` : ''}</td>
+                                                </tr>
+                                            `).join('')}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div class="flex gap-2">
+                                    <button type="button" onclick="app.handleAddRep()" class="text-blue-600 font-semibold">+ Add Rep</button>
+                                    <button type="submit" class="sn-btn-primary px-6 py-2 rounded-lg font-semibold">Submit to SharePoint</button>
+                                </div>
+                            </form>
+                        </div>
+                    `;
+                } else if (this.viewMode === 'report' && this.isAdmin) {
+                    content = `
+                        <div class="bg-white rounded-lg shadow-lg p-6">
+                            <div class="flex justify-between items-center mb-6">
+                                <h2 class="text-2xl font-bold sn-accent">All Submissions</h2>
+                                <button onclick="app.handleExportCSV()" class="sn-btn-primary px-4 py-2 rounded-lg text-sm">📥 Export CSV</button>
+                            </div>
+                            <div class="overflow-x-auto">
+                                <table class="w-full border-collapse">
+                                    <thead>
+                                        <tr class="sn-table-header">
+                                            <th class="px-4 py-3 text-left">Quarter</th>
+                                            <th class="px-4 py-3 text-left">First Name</th>
+                                            <th class="px-4 py-3 text-left">Last Name</th>
+                                            <th class="px-4 py-3 text-left">Role</th>
+                                            <th class="px-4 py-3 text-left">BU</th>
+                                            <th class="px-4 py-3 text-left">%</th>
+                                            <th class="px-4 py-3 text-left">Leader</th>
+                                            <th class="px-4 py-3 text-left">Manager</th>
+                                            <th class="px-4 py-3 text-left">Date</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${this.reportData.map((row, idx) => `
+                                            <tr class="${idx % 2 === 0 ? 'sn-zebra' : 'bg-white'} border-b border-gray-300">
+                                                <td class="px-4 py-3">${row.quarter}</td>
+                                                <td class="px-4 py-3">${row.repFirstName}</td>
+                                                <td class="px-4 py-3">${row.repLastName}</td>
+                                                <td class="px-4 py-3">${row.role}</td>
+                                                <td class="px-4 py-3">${row.businessUnit}</td>
+                                                <td class="px-4 py-3">${row.attainment}%</td>
+                                                <td class="px-4 py-3">${row.leader}</td>
+                                                <td class="px-4 py-3">${row.managerName}</td>
+                                                <td class="px-4 py-3 text-sm">${new Date(row.timestamp).toLocaleDateString()}</td>
+                                            </tr>
+                                        `).join('')}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    `;
+                } else if (this.viewMode === 'status' && this.isAdmin) {
+                    const status = this.getManagerStatus();
+                    const submitted = status.filter(s => s.submitted);
+                    const notSubmitted = status.filter(s => !s.submitted);
+
+                    content = `
+                        <div class="bg-white rounded-lg shadow-lg p-6">
+                            <h2 class="text-2xl font-bold sn-accent mb-4">Manager Status</h2>
+                            <button onclick="app.generateReminders()" class="bg-red-600 text-white px-6 py-2 rounded-lg hover:bg-red-700 font-semibold mb-6">📧 Send Reminders</button>
+                            <div class="grid grid-cols-2 gap-6">
+                                <div>
+                                    <h3 class="font-semibold text-lg text-green-700 mb-4">✓ Submitted (${submitted.length})</h3>
+                                    <div class="space-y-2">
+                                        ${submitted.map(m => `<div class="p-3 bg-green-50 border border-green-300 rounded">
+                                            <p class="font-medium">${m.name}</p>
+                                            <p class="text-sm text-gray-600">${m.email}</p>
+                                        </div>`).join('')}
+                                    </div>
+                                </div>
+                                <div>
+                                    <h3 class="font-semibold text-lg text-red-700 mb-4">✗ Pending (${notSubmitted.length})</h3>
+                                    <div class="space-y-2">
+                                        ${notSubmitted.map(m => `<div class="p-3 bg-red-50 border border-red-300 rounded">
+                                            <p class="font-medium">${m.name}</p>
+                                            <p class="text-sm text-gray-600">${m.email}</p>
+                                        </div>`).join('')}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }
+
+                const tabs = this.isAdmin ? `
+                    <div class="flex gap-4 border-b border-gray-300 mb-6">
+                        <button onclick="app.viewMode = 'input'; app.render()" class="px-4 py-2 ${this.viewMode === 'input' ? 'sn-tab-active' : 'text-gray-600'}">Submit</button>
+                        <button onclick="app.viewMode = 'report'; app.render()" class="px-4 py-2 ${this.viewMode === 'report' ? 'sn-tab-active' : 'text-gray-600'}">Report</button>
+                        <button onclick="app.viewMode = 'status'; app.render()" class="px-4 py-2 ${this.viewMode === 'status' ? 'sn-tab-active' : 'text-gray-600'}">Status</button>
+                    </div>
+                ` : `<div></div>`;
+
+                app.innerHTML = `
+                    <div class="min-h-screen bg-white">
+                        <div class="sn-header py-6 px-4 shadow">
+                            <div class="max-w-6xl mx-auto flex justify-between items-center">
+                                <div>
+                                    <h1 class="text-3xl font-bold">${this.currentQuarter} Attainment Results</h1>
+                                    <p class="text-gray-300 mt-1">${this.managerName}</p>
+                                </div>
+                                <div class="text-right">
+                                    <p class="text-yellow-300 font-semibold mb-2">${this.daysUntilDeadline} days left</p>
+                                    <button onclick="app.handleLogout()" class="text-yellow-300 hover:text-white text-sm">Logout</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="max-w-6xl mx-auto p-6">
+                            ${tabs}
+                            ${content}
+                        </div>
+                    </div>
+                `;
+            }
+        }
+
+        const app = new AttainmentApp();
+    </script>
+</body>
+</html>
